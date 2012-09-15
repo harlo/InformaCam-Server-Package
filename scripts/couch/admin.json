@@ -1,0 +1,11 @@
+{
+   "_id": "_design/admin",
+   "views": {
+       "attemptLogin": {
+           "map": "function(doc) {if(doc.unpw) {emit(doc.unpw, doc);}}"
+       },
+       "getById": {
+           "map": "function(doc) {if(doc._id) {var user={};for(key in doc){if(key != 'unpw' && key != 'displayName' && key != 'username') {user[key] = doc[key];}}emit(doc._id, user);}}"
+       }
+   }
+}
