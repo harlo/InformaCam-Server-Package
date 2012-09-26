@@ -1,3 +1,6 @@
 .DS_Store
 scripts/mcr/v171/*
-scripts/py/*.pyc
+*.pyc
+*.err
+*.log
+*.pid
