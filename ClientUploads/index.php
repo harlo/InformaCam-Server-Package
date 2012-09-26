@@ -18,12 +18,22 @@
 			'image' => 400,
 			'video' => 401
 		),
+		'requirements' => array(
+			'baseImage' => 1995,
+			'pgpKeyEncoded' => 1996
+		),
+		'supporting_data_types' => array(
+			'baseImage' => 'baseImage.jpg',
+			'publicKeyEncoded' => 'publicKey.asc'
+		),
 		'submission_root' => $submission_root,
-		'root' => $root
+		'root' => $root,
+		'source_root' => $source_root,
+		'derivative_root' => $derivative_root
 	);
 	
 	function toErr($errno, $errstr) {
-		echo $errno . ": " . $errstr;
+		echo $errno . ": " . $errstr . "<br />";
 	}
 	
 	//set_error_handler('toErr');
@@ -40,6 +50,117 @@
 			}	
 		}
 		return null;
+	}
+	
+	function initSource($pgpKeyFingerprint, $db) {
+		mkdir($GLOBALS['source_root'] . $pgpKeyFingerprint, 0770, true);
+		$newSource = new stdclass;	
+		$newSource->sourceId = $pgpKeyFingerprint;
+				
+		try {
+			$db->post($newSource);
+			return $newSource;
+		} catch(SagException $e) {
+			return null;
+		}
+	}
+	
+	function sourceExists($pgpKeyFingerprint, $db) {
+		try {
+			$uLog = $db->get("_design/sources/_view/sourceId?key=%22" . $pgpKeyFingerprint . "%22")->body->rows;
+			if(count($uLog) == 0) {
+				return null;
+			} else {
+				return $uLog[0]->value;
+			}
+		} catch(SagException $e) {
+			echo $e->getMessage();
+			return null;
+		}
+	}
+	
+	class InformaMessage {
+		private $expectation;
+		protected $sag;
+		public $res;
+		
+		
+		public function __construct($base, $pgpKeyFingerprint, $msg) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+					
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('sources');
+			$this->expectation = sourceExists($pgpKeyFingerprint, $this->sag);
+			
+			if($this->expectation == null) {
+				$this->res->reason = "No source exists for " . $pgpKeyFingerprint;
+				return;
+			}
+			
+
+			if(!move_uploaded_file(
+				$msg['tmp_name'],
+				$GLOBALS['derivative_root'] . $base . "/messages/" . basename($msg['name']))
+			) {
+				$this->res->reason = "Trouble uploading file.";
+				$this->res->error_code = 1999;
+				return;
+			}
+			
+			$this->res->result = $GLOBALS['a_ok'];
+		}
+
+	}
+	
+	class Messages {
+		private $expectation;
+		protected $sag;
+		public $res;
+		
+		public function __construct($mediaBase, $pgpKeyFingerprint, $readArrayStr) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+			
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('sources');
+			$this->expectation = sourceExists($pgpKeyFingerprint, $this->sag);
+			
+			if($this->expectation == null) {
+				$this->res->reason = "No source exists for " . $pgpKeyFingerprint;
+				return;
+			}
+			
+			if($readArrayStr != null)
+				$readArray = explode('","', substr($readArrayStr,2,-2));
+			
+			$msgRoot = $GLOBALS['derivative_root'] . $mediaBase . "/messages/";			
+			$messages = scandir($msgRoot);
+			$unread = array();
+			foreach($messages as $msg) {
+				if($msg != "." && $msg != "..") {
+					if($readArray != null && in_array($msg, $readArray)) {
+						continue;
+					}
+					
+					$message = new stdclass;
+					$message->url = $msg;
+					$m = fopen($msgRoot . $msg, "r");
+					while(!feof($m))
+						$message->content .= fgets($m);
+					fclose($m);
+					array_push($unread, $message);
+
+				}
+			}
+			
+			if(count($unread) > 0) {
+				$this->res->bundle->messages = $unread;
+			}
+			
+			$this->res->result = $GLOBALS['a_ok'];
+			
+		}
 	}
 	
 	class UploadCheck {
@@ -73,7 +194,7 @@
 					array_push($missing, $check);
 				
 			}
-						
+			
 			if(count($missing) == 0) {
 				$this->res->reason = "No files are missing";
 				$this->res->error_code = 1997;
@@ -82,8 +203,44 @@
 			
 			$this->res->result = $GLOBALS['a_ok'];
 			$this->res->missingTorrents = $missing;
-
+		}
+	}
+	
+	class RequirementCheck {
+		private $expectation;
+		protected $sag;
+		public $res;
+		
+		public function __construct($pgpKeyFingerprint) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+		
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('sources');
+			$this->expectation = sourceExists($pgpKeyFingerprint, $this->sag);
 			
+			$requirements = array();
+			
+			if($this->expectation == null) {
+				$this->expectation = initSource($pgpKeyFingerprint, $this->sag);
+				$requirements = array(
+					$GLOBALS['requirements']['baseImage'],
+					$GLOBALS['requirements']['pgpKeyEncoded']
+				);
+				
+			} else {
+				$files = scandir($GLOBALS['source_root'] . $pgpKeyFingerprint);
+				if(!in_array($GLOBALS['supporting_data_types']['baseImage'], $files))
+					array_push($requirements, $GLOBALS['requirements']['baseImage']);
+						
+				if(!in_array($GLOBALS['supporting_data_types']['publicKeyEncoded'], $files))
+					array_push($requirements, $GLOBALS['requirements']['pgpKeyEncoded']);
+			}
+			
+			if(count($requirements) > 0)
+				$this->res->bundle->requirements = $requirements;
+				
+			$this->res->result = $GLOBALS['a_ok'];
 		}
 	}
 	
@@ -189,6 +346,29 @@
 			try {
 				$this->sag->post($this->bundle);
 				unset($this->bundle->path);
+				
+				$this->sag->setDatabase('sources');
+				$source = sourceExists($this->bundle->sourceId, $this->sag);
+				$supportingDataRequired = array();
+				
+				if($source == null) {
+					// also ask for missing req. files
+					$source = initSource($this->bundle->sourceId, $this->sag);
+					$supportingDataRequired = array(
+						$GLOBALS['requirements']['baseImage'],
+						$GLOBALS['requirements']['pgpKeyEncoded']
+					);
+				} else {
+					// check to see if there are missing req. files
+					$requirementCheck = new RequirementCheck($this->bundle->sourceId);
+					if($requirementCheck->res->result == $GLOBALS['a_ok'] && isset($requirementCheck->bundle->requirements)) {
+						$supportingDataRequired = $requirementCheck->bundle->requirements;
+					}
+				}
+				
+				if(count($supportingDataRequired) > 0)
+					$this->bundle->supportingDataRequired = $supportingDataRequired;
+				
 				$this->res->bundle = $this->bundle;
 				$this->res->result = $GLOBALS['a_ok'];
 			} catch(SagException $e) {
@@ -231,6 +411,59 @@
 		}
 	}
 		
+	class SupportingDataUpload {
+		private $expectation;
+		protected $sag;
+		public $res;
+		
+		public function __construct($supportingDataType, $pgpKeyFingerprint, $file) {
+			
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+			
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('sources');
+			
+			$this->expectation = sourceExists($pgpKeyFingerprint, $this->sag);
+			if($this->expectation == null) {
+				$this->res->reason = "No source exists for " . $pgpKeyFingerprint;
+				return;
+			}
+			
+			
+			if(file_exists($GLOBALS['source_root'] . basename($file['name']))) {
+				$this->res->reason = "File exists: " . basename($file['name']);
+				return;
+			}
+			
+			
+			if(!move_uploaded_file(
+				$file['tmp_name'],
+				$GLOBALS['source_root'] . basename($file['name'])
+				)
+			) {
+				$this->res->reason = "Could not upload file: " . basename($file['name']);
+				return;
+			}
+			
+			if($supportingDataType == $GLOBALS['supporting_data_types']['baseImage']) {
+				$this->expectation->baseImage = $GLOBALS['source_root'] . basename($file['name']);
+			} else if($supportingDataType == $GLOBALS['supporting_data_types']['publicKeyEncoded']) {
+				$this->expectation->publicKeyEncoded = $GLOBALS['source_root'] . basename($file['name']);
+			}
+			
+			
+			try {
+				$this->sag->post($this->expectation);
+				$this->res->result = $GLOBALS['a_ok'];
+			} catch(SagException $e) {
+				$this->res->reason = $e.getMessage();
+				return;
+			}
+					
+		}
+	}
+	
 	if(
 		!empty($_POST['pgpKeyFingerprint']) &&
 		!empty($_POST['auth_token']) &&
@@ -268,13 +501,76 @@
 		!empty($_POST['pgpKeyFingerprint']) &&
 		!empty($_POST['auth_token'])
 	) {
-		//TODO: check for missing uploads
+		// check for missing uploads
 		$uploadCheck = new UploadCheck(
 			$_POST['checkForMissingTorrents'],
 			$_POST['pgpKeyFingerprint'],
 			$_POST['auth_token']
 		);
 		echo json_encode($uploadCheck);
+	}
+	
+	if(
+		!empty($_POST['supportingData']) &&
+		!empty($_POST['pgpKeyFingerprint']) &&
+		!empty($_FILES['InformaCamUpload'])
+	) {
+		// TODO: upload supporting data
+		$supportingDataUpload = new SupportingDataUpload(
+			$_POST['supportingData'],
+			$_POST['pgpKeyFingerprint'],
+			$_FILES['InformaCamUpload']
+		);
+		echo json_encode($supportingDataUpload);
+	}
+	
+	if(
+		!empty($_POST['getRequirements']) 
+	) {
+		// get supporting data required for source (pgp key, base image)
+		$requirementCheck = new RequirementCheck($_POST['getRequirements']);
+		echo json_encode($requirementCheck);
+	}
+	
+	if(
+		!empty($_GET['getRequirements']) 
+	) {
+		// get supporting data required for source (pgp key, base image)
+		$requirementCheck = new RequirementCheck($_GET['getRequirements']);
+		echo json_encode($requirementCheck);
+	}
+	
+	if(
+		!empty($_GET['getMessages']) &&
+		!empty($_GET['pgpKeyFingerprint'])
+	) {
+		$messages = new Messages($_GET['getMessages'],$_GET['pgpKeyFingerprint'],empty($_GET['readArray']) ? null : $_GET['readArray']);
+		echo json_encode($messages);
+		// getMessages=cb662bb1389dbe16a9dbb6f36b83d3198a289c78&pgpKeyFingerprint=04e29577e1db4af33027c0db61ce70a6604b585f&readArray=[]
+	}
+	
+	if(
+		!empty($_POST['getMessages']) &&
+		!empty($_POST['pgpKeyFingerprint'])
+	) {
+		$messages = new Messages($_POST['getMessages'],$_POST['pgpKeyFingerprint'],empty($_POST['readArray']) ? null : $_POST['readArray']);
+		echo json_encode($messages);
+		// getMessages=cb662bb1389dbe16a9dbb6f36b83d3198a289c78&pgpKeyFingerprint=04e29577e1db4af33027c0db61ce70a6604b585f&readArray=[]
+	}
+	
+
+	if(
+		!empty($_POST['putNewMessage']) &&
+		!empty($_POST['pgpKeyFingerprint']) &&
+		!empty($_FILES['InformaCamUpload'])
+	) {
+		
+		$message = new InformaMessage(
+			$_POST['putNewMessage'],
+			$_POST['pgpKeyFingerprint'],
+			$_FILES['InformaCamUpload']
+		);
+		echo json_encode($message);
 	}
 
 	/*

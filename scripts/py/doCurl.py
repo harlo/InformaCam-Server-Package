@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-import cStringIO, json, pycurl, subprocess
+import cStringIO, json, pycurl, subprocess, constants
 
 class DoCurl(object):
 	def __init__(self, query):
 		self.buf = cStringIO.StringIO()
-		url = ('http://highsteppers:youAreNotAServerAdmin@localhost:5984/%s' % query).__str__()
+		url = ('%s@localhost:5984/%s' % (constants.couchLogin, query)).__str__()
 		curl = pycurl.Curl()
 		curl.setopt(pycurl.URL, url)
 		curl.setopt(pycurl.WRITEFUNCTION, self.buf.write)
@@ -30,7 +30,7 @@ class DoCurl(object):
 		return "{" + ",".join(newDict) + "}"
 	
 	def putOverride(self, query, json):
-		url = ('http://highsteppers:youAreNotAServerAdmin@localhost:5984/%s' % query).__str__()
+		url = ('%s@localhost:5984/%s' % (constants.couchLogin, query)).__str__()
 		
 		cmd = 'curl -H "Content-Type: application/json" -X PUT -d \'%s\' %s' % (json, url)
 		

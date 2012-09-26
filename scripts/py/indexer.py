@@ -22,7 +22,8 @@ dictTemplate = [('dateCreated', 0),('sourceId', ""),('representation', []),('key
 class Derivative():
 	def __init__(self, fn, mt, pw):
 		self.filename = fn
-		self.mediaType = mt
+		self.mediaType = int(mt)
+
 		self.password = pw
 		self.derivative = dict(dictTemplate)
 		if(self.getMetadata() == True):
@@ -83,10 +84,12 @@ class Derivative():
 		self.parseJ3M()
 		self.derivative['timestampIndexed'] = int(time.time()) * 1000
 		d = (couchTemplate % (self.derivative['dateCreated'], self.derivative['sourceId'], self.derivative['representation'], self.derivative['keywords'], self.derivative['locationOnSave'], self.derivative['location'], self.derivative['j3m'], self.derivative['mediaType'], self.derivative['timestampIndexed'], self.derivative['discussions'])).__str__()
+
 		cmd = 'curl -H "Content-Type: application/json" -X POST -d \'%s\' %s' % (d,couchQuery)
 		
 		couch = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 		output = couch.communicate()[0]
+
 				
 	def parseJ3M(self):
 		self.derivative['j3m'] = self.j3m
@@ -117,6 +120,8 @@ class Derivative():
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "messages"], stdout=subprocess.PIPE)
 		makeFolder.communicate()
+		chownFolder = subprocess.Popen(["sudo","chown","-R", "ubuntu:www-data", baseRoot + "messages"] , stdout=subprocess.PIPE)
+		chownFolder.communicate()
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "annotations"], stdout=subprocess.PIPE)
 		makeFolder.communicate()
@@ -137,7 +142,7 @@ class Derivative():
 						representations.append(base + ".mp4")
 			
 					cmd = "ffmpeg2theora %s"
-					ogg = subprocess.Popen(cmd % self.filename, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					ogg = subprocess.Popen(cmd % (baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					
 					if ogg.communicate()[0] == None:
 						representations.append(base + ".ogv")
@@ -149,23 +154,38 @@ class Derivative():
 	def parseAnnotations(self, annotations):
 		discussions = []
 		for a in annotations:
-			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s]}'
-			annotationDict = '{"content":"%s","submittedBy":"%s"}'
-			
-			if(a['obfuscationType'].find('InformaTagger') != -1):
+			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
+			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
+			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
+			videoRegionBoundsDict = '{"timestamp":%d,"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
+			if(a['obfuscationType'].find('InformaTagger') != -1) or (a['obfuscationType'].find('identify') != -1):
+				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
+				
 				if self.mediaType == IMAGE:
 					timeIn = 0
 					timeOut = 0
 					duration = 0
+					regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
 				# todo: how to parse the video...
+			
+				elif self.mediaType == VIDEO:
+					timeIn = a['videoStartTime']
+					timeOut = a['videoEndTime']
+					duration = a['videoEndTime'] - a['videoStartTime']
+					videoTrail = []
 					
-				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'])).__str__()
-				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation)).__str__()
-				
-				
+					for vt in a['videoTrail']:
+						regionBounds = (videoRegionBoundsDict % (vt['timestamp'],vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
+						
+						videoTrail.append(regionBounds)
+					
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+
 				# TODO burn this annotation to a flat file?
 				discussions.append(discussion)
 		
+		print "[" + ",".join(discussions) + "]"
 		return "[" + ",".join(discussions) + "]"
 	
 	def parseForKeywords(self, annotations):
@@ -213,14 +233,13 @@ class Derivative():
 def init(fn, mt, pw):
 	return Derivative(fn, mt, pw)
 	
-'''	
+'''
 if len(sys.argv) != 4:
 	sys.exit("please enter filename, mediaType, and password")
 else:
 	filename = sys.argv[1]
 	mediaType = sys.argv[2]
 	password = sys.argv[3]
-	derivative = Derivative()
-'''
+	derivative = Derivative(filename, mediaType, password)
 
-	
+'''

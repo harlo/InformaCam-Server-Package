@@ -54,7 +54,7 @@ def checkForUploadedTorrents(torrent_path, torrent_descriptor):
 		
 def buildMediaObject(torrent_path, torrent_descriptor):
 	data = ""
-	cmd = "sudo chown -R ubuntu:ubuntu %s" % torrent_path
+	cmd = "sudo chown -R ubuntu:www-data %s" % torrent_path
 	p_update = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 	print p_update.communicate()[0]
 	

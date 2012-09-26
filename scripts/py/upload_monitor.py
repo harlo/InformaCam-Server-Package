@@ -1,10 +1,14 @@
 #!/usr/bin/env python
-import sys, pycurl, os, cStringIO, json, subprocess, time, doCurl, j3mifier, indexer, constants
+import sys, pycurl, os, cStringIO, json, subprocess, time, doCurl, j3mifier, indexer, constants, datetime, base64, message
 
 get_unindexed = 'submissions/_design/submissions/_view/bytes_transferred'
 get_submission = 'submissions/_design/submissions/_view/j3m?key=%s'
 delete_submission = 'submissions/%s?rev=%s'
 submissions_root = constants.submissions_root
+derivatives_root = constants.derivativeRoot
+
+def sendConfirmation(root):
+	message.makeMessage(root, constants.submission_message)
 
 def updateSubmissions(derivative):
 	#delete the record so this is no longer in here...
@@ -15,6 +19,7 @@ def updateSubmissions(derivative):
 	curl = doCurl.DoCurl(delete_submission % (submission['_id'], submission['_rev']))
 	curl.setMethod("DELETE")
 	curl.perform()
+	sendConfirmation(ds)
 	
 def getUnindexedUploads():
 	submissions = doCurl.DoCurl(get_unindexed).perform()['rows']
