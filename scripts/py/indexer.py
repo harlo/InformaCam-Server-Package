@@ -158,8 +158,14 @@ class Derivative():
 			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
 			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
 			videoRegionBoundsDict = '{"timestamp":%d,"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
-			if(a['obfuscationType'].find('InformaTagger') != -1) or (a['obfuscationType'].find('identify') != -1):
-				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
+			if(a['obfuscationType'].find('InformaTagger') != -1) or (a['obfuscationType'].find('identify') != -1 or (a['obfuscationType'].find('pixel') != -1)):
+				annotation = ""
+				try:
+					subjectAlias = a['subject']['alias']
+					annotation = (annotationDict % (subjectAlias, self.derivative['sourceId'], a['timestamp'])).__str__()
+				except:
+					print "error getting a[subject][alias]"
+				print annotation
 				
 				if self.mediaType == IMAGE:
 					timeIn = 0
@@ -191,8 +197,13 @@ class Derivative():
 	def parseForKeywords(self, annotations):
 		keywords = []
 		for a in annotations:
-			if(a['obfuscationType'].find('InformaTagger') != -1):
-				alias = a['subject']['alias']
+			if(a['obfuscationType'].find('InformaTagger') != -1 or (a['obfuscationType'].find('identify') != -1 or (a['obfuscationType'].find('pixel') != -1)):
+				alias = ""
+				try:
+					alias = a['subject']['alias']
+				except:
+					print "error getting a[subject][alias]"
+					
 				words = alias.split(" ")
 				for w in words:
 					match = False

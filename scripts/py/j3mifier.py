@@ -57,10 +57,12 @@ def buildMediaObject(torrent_path, torrent_descriptor):
 	cmd = "sudo chown -R ubuntu:www-data %s" % torrent_path
 	p_update = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 	print p_update.communicate()[0]
+	print cmd
 	
 	for n in range(0, torrent_descriptor['num_chunks']):
 		f = torrent_path + '/' + ("%d_.j3mtorrent" % n)
 		file = open(f, 'r')
+		print f
 		b64 = json.loads(file.read())
 		
 		blob = base64.b64decode(b64['blob'])
@@ -83,6 +85,7 @@ def buildMediaObject(torrent_path, torrent_descriptor):
 		return False
 
 def init(key):
+	print key;
 	path = doCurl.DoCurl('submissions/%s' % key).perform()['path']
 	paths = path.split("/")
 	torrent_descriptor = getTorrentDescriptor(paths[len(paths) - 1])
