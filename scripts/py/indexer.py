@@ -197,7 +197,7 @@ class Derivative():
 	def parseForKeywords(self, annotations):
 		keywords = []
 		for a in annotations:
-			if(a['obfuscationType'].find('InformaTagger') != -1 or (a['obfuscationType'].find('identify') != -1 or (a['obfuscationType'].find('pixel') != -1)):
+			if(a['obfuscationType'].find('InformaTagger') != -1 or a['obfuscationType'].find('identify') != -1 or a['obfuscationType'].find('pixel') != -1):
 				alias = ""
 				try:
 					alias = a['subject']['alias']
