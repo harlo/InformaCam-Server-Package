@@ -1,6 +1,6 @@
 <?php
 
-	ini_set('error_reporting', E_ALL);
+	//ini_set('error_reporting', E_ALL);
 	require_once('sag/Sag.php');
 	require_once('config.php');
 	
@@ -50,6 +50,19 @@
 			}	
 		}
 		return null;
+	}
+	
+	function isValidImportForUser($pgpKeyFingerprint, $id, $rev, $db) {
+		$uLog = $db->get("_design/submissions/_view/sourceId")->body->rows;
+		if(count($uLog) == 0)
+			return null;
+		else {
+			for($l = 0; $l < count($uLog); $l++) {
+				if($uLog[$l]->value->_id == $id && $uLog[$l]->value->_rev == $rev) {
+					return $uLog[$l]->value;
+				}
+			}
+		}
 	}
 	
 	function initSource($pgpKeyFingerprint, $db) {
@@ -571,6 +584,94 @@
 			$_FILES['InformaCamUpload']
 		);
 		echo json_encode($message);
+	}
+	
+	class Importer {
+		protected $sag;
+		private $expectation;
+		public $res;
+		
+		public function __construct($file, $rev, $id, $uId) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+			
+			// hash the media
+			$timestamp_scheduled = time() * 1000;
+			$original_hash = hash("sha1", $file['name'] . $timestamp_scheduled);
+			
+			// make its folders and whatever
+			if(!mkdir($GLOBALS['submission_root'] . $original_hash, 0770, true)) {
+				$this->res->reason = "Cannot create directory for " . $GLOBALS['submission_root'] . $original_hash;
+				return;
+			}
+			
+			// place in there
+			if(!move_uploaded_file(
+				$file['tmp_name'],
+				$GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name'])
+				)
+			) {
+				$this->res->reason = "Could not upload file: " . $GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name']);
+				return;
+			}
+			
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('submissions');
+			
+			$this->expectation = null;
+			try {
+				$this->expectation = isValidImportForUser($uId, $id, $rev, $this->sag);
+			} catch(SagException $e) {
+				$this->res->reason = $e->getMessage();
+				return;
+			}
+			
+			if($this->expectation == null) {
+				$this->res->reason = "Invalid id/rev";
+				return;
+			}
+			
+			
+			// update sub to have path and media type, update all bytes transferred, and set a flag for complete ul?
+			
+			$this->expectation->path = $GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name']);
+			
+			if(strpos($file['name'], ".jpg"))
+				$this->expectation->mediaType = 400;
+			else if(strpos($file['name'], ".mkv"))
+				$this->expectation->mediaType = 401;
+				
+			$this->expectation->bytes_transferred = $file['size'];
+			$this->expectation->bytes_expected = $file['size'];
+			$this->expectation->j3m_bytes_expected = $file['size'];
+			$this->expectation->importFlag = true;
+			$this->expectation->timestamp_scheduled = $timestamp_scheduled;
+			
+			try {
+				$this->sag->post($this->expectation);
+			} catch(SagException $e) {
+				$this->result->reason = $e->getMessage();
+				return;
+			}
+			
+			$this->res->result = $GLOBALS['a_ok'];
+		}
+	}
+	
+	if(
+		!empty($_FILES['InformaCamImport']) &&
+		!empty($_POST['subAuthToken']) &&
+		!empty($_POST['subId']) &&
+		!empty($_POST['uId'])
+	) {
+		$import = new Importer($_FILES['InformaCamImport'], $_POST['subAuthToken'], $_POST['subId'], $_POST['uId']);
+		// TODO: parse result...
+		include('doImport.php');
+		
+	}
+	
+	if(!empty($_GET['doImport'])) {
+		include('doImport.php');
 	}
 
 	/*

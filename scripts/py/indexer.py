@@ -142,7 +142,7 @@ class Derivative():
 						representations.append(base + ".mp4")
 			
 					cmd = "ffmpeg2theora %s"
-					ogg = subprocess.Popen(cmd % (baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					ogg = subprocess.Popen(cmd % self.filename, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					
 					if ogg.communicate()[0] == None:
 						representations.append(base + ".ogv")
@@ -157,37 +157,30 @@ class Derivative():
 			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
 			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
 			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
-			videoRegionBoundsDict = '{"timestamp":%d,"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
-			if(a['obfuscationType'].find('InformaTagger') != -1) or (a['obfuscationType'].find('identify') != -1 or (a['obfuscationType'].find('pixel') != -1)):
-				annotation = ""
-				try:
-					subjectAlias = a['subject']['alias']
-					annotation = (annotationDict % (subjectAlias, self.derivative['sourceId'], a['timestamp'])).__str__()
-				except:
-					print "error getting a[subject][alias]"
-				print annotation
-				
+			
+			if(a['obfuscationType'].find('InformaTagger') != -1):
 				if self.mediaType == IMAGE:
 					timeIn = 0
 					timeOut = 0
 					duration = 0
 					regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
-					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
 				# todo: how to parse the video...
-			
-				elif self.mediaType == VIDEO:
+			elif(a['obfuscationType'].find('identify') != -1):
+				if self.mediaType == VIDEO:
 					timeIn = a['videoStartTime']
 					timeOut = a['videoEndTime']
 					duration = a['videoEndTime'] - a['videoStartTime']
 					videoTrail = []
 					
 					for vt in a['videoTrail']:
-						regionBounds = (videoRegionBoundsDict % (vt['timestamp'],vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
-						
+						regionBounds = (regionBoundsDict % (vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
 						videoTrail.append(regionBounds)
-					
-					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+						
 
+				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
+				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+				
+				
 				# TODO burn this annotation to a flat file?
 				discussions.append(discussion)
 		
@@ -197,13 +190,8 @@ class Derivative():
 	def parseForKeywords(self, annotations):
 		keywords = []
 		for a in annotations:
-			if(a['obfuscationType'].find('InformaTagger') != -1 or a['obfuscationType'].find('identify') != -1 or a['obfuscationType'].find('pixel') != -1):
-				alias = ""
-				try:
-					alias = a['subject']['alias']
-				except:
-					print "error getting a[subject][alias]"
-					
+			if(a['obfuscationType'].find('InformaTagger') != -1):
+				alias = a['subject']['alias']
 				words = alias.split(" ")
 				for w in words:
 					match = False
