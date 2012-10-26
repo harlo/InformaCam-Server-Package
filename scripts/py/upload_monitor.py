@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import sys, pycurl, os, cStringIO, json, subprocess, time, doCurl, j3mifier, indexer, constants, datetime, base64, message
+import sys, pycurl, os, cStringIO, json, subprocess, time, doCurl, j3mifier, indexer, constants, datetime, base64, message, logging
 
 get_unindexed = 'submissions/_design/submissions/_view/bytes_transferred'
 get_submission = 'submissions/_design/submissions/_view/j3m?key=%s'
@@ -9,8 +9,16 @@ delete_submission = 'submissions/%s?rev=%s'
 submissions_root = constants.submissions_root
 derivatives_root = constants.derivativeRoot
 
+def doSudoTest():
+	makeFolder = subprocess.Popen(["mkdir", constants.chownTest], stdout=subprocess.PIPE)
+	testResult = makeFolder.communicate()[0]
+	
+	chownFolder = subprocess.Popen(["chown","-R", "www-data:www-data", constants.chownTest] , stdout=subprocess.PIPE)
+	testResult = chownFolder.communicate()[0]
+
 def sendConfirmation(root):
 	message.makeMessage(root, constants.submission_message)
+	logger.info("sent confirmation to %s" % root)
 	
 def updateImportedSubmission(path):
 	submission_id = doCurl.DoCurl(get_import % ("%22" + path + "%22")).perform()['rows'][0]['value']
@@ -20,6 +28,7 @@ def updateImportedSubmission(path):
 	curl = doCurl.DoCurl(delete_submission % (submission_id, submission_rev))
 	curl.setMethod("DELETE")
 	curl.perform()
+	logger.info("deleted submission %s" % path)
 
 def updateSubmissions(derivative):
 	#delete the record so this is no longer in here...
@@ -30,11 +39,14 @@ def updateSubmissions(derivative):
 	curl = doCurl.DoCurl(delete_submission % (submission['_id'], submission['_rev']))
 	curl.setMethod("DELETE")
 	curl.perform()
+	logger.info("deleted submission %s" % ds)
 	sendConfirmation(ds)
 	
 def getUnindexedUploads():
 	submissions = doCurl.DoCurl(get_unindexed).perform()['rows']
 	for submission in submissions:
+		res = False
+		isImport = False
 		print "finding torrents for %s..." % submission['key']
 		
 		try:
@@ -44,12 +56,13 @@ def getUnindexedUploads():
 		except:
 			# get the path key
 			res = j3mifier.init(submission['key'])
-			isImport = False
 				
 		if res == False:
 			print "still waiting for this submission to be complete"
+			logger.info("performed check: no new complete submissions")
 		else:
 			print "now indexing %s (mediatype: %s)" % (res[0], res[1])
+			logger.info("attempting to index %s (mediatype: %s)" % (res[0], res[1]))
 			# this file should now be indexed!
 			derivative = indexer.init(res[0], res[1], isImport)
 			
@@ -58,8 +71,17 @@ def getUnindexedUploads():
 				if isImport == False:
 					updateSubmissions(derivative.derivative['representation'])
 				else:
-					print "is import!"
-					#updateImportedSubmission(res[0])
-				
-print "hello upload monitor"		
+					updateImportedSubmission(res[0])
+
+logger = logging.getLogger('informaCamServer_py')
+handler = logging.FileHandler(constants.logFile)
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+
+print "hello upload monitor"
+logger.info("upload monitor invoked")
+
+#doSudoTest()	
 getUnindexedUploads()

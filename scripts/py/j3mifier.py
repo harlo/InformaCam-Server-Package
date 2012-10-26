@@ -20,7 +20,7 @@ def updateBytesTransferred(lookup, torrent_path):
 
 	j3m = curl.uReplace(j['j3m'])
 	
-	couch = 'http://highsteppers:youAreNotAServerAdmin@localhost:5984/'
+	couch = '%s@localhost:5984/' % constants.couchLogin
 	update = "submissions/%s?rev=%s" % (j['_id'],j['_rev'])
 	u = '{"_id":"%s","_rev":"%s","bytes_expected":%d,"bytes_transferred":%d,"j3m":%s,"j3m_bytes_expected":%s,"mediaType":%d,"sourceId":"%s","timestamp_created":%d,"timestamp_indexed":%d,"timestamp_scheduled":%d}' % (j['_id'],j['_rev'],j['bytes_expected'],bytesTransferred,j3m,j['j3m_bytes_expected'],j['mediaType'],j['sourceId'],j['timestamp_created'],j['timestamp_indexed'],j['timestamp_scheduled'])
 		
@@ -54,7 +54,7 @@ def checkForUploadedTorrents(torrent_path, torrent_descriptor):
 		
 def buildMediaObject(torrent_path, torrent_descriptor):
 	data = ""
-	cmd = "sudo chown -R ubuntu:www-data %s" % torrent_path
+	cmd = "chown -R %s:www-data %s" % (constants.masterUser, torrent_path)
 	p_update = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 	print p_update.communicate()[0]
 	

@@ -2,10 +2,10 @@
 import sys, os, cStringIO, json, subprocess, time, constants, keywords
 
 '''
-	argv: filename mediaType gpg_password
+	argv: filename mediaType isImport
 '''
-couchQuery = "http://highsteppers:youAreNotAServerAdmin@localhost:5984/derivatives"
-updateQuery = "http://highsteppers:youAreNotAServerAdmin@localhost:5984/submissions"
+couchQuery = "%s@localhost:5984/derivatives" % constants.couchLogin
+updateQuery = "%s@localhost:5984/submissions" % constants.couchLogin
 derivativeRoot = constants.derivativeRoot
 
 omits = ["Got obscura marker","Generic APPn ffe0 loaded. Marker string: JFIF", "Component", "Didn't find"]
@@ -32,7 +32,7 @@ class Derivative():
 		self.derivative = dict(dictTemplate)
 		self.derivative['importFlag'] = self.isImport
 		if(self.getMetadata() == True):
-			#self.decryptMetadata() // is broken, fix later
+			#self.decryptMetadata() // is unimplemented, fix later
 			
 			self.createDerivative()
 	
@@ -124,7 +124,7 @@ class Derivative():
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "messages"], stdout=subprocess.PIPE)
 		makeFolder.communicate()
-		chownFolder = subprocess.Popen(["sudo","chown","-R", "ubuntu:www-data", baseRoot + "messages"] , stdout=subprocess.PIPE)
+		chownFolder = subprocess.Popen(["chown","-R", "%s:www-data" % constants.masterUser, baseRoot + "messages"] , stdout=subprocess.PIPE)
 		chownFolder.communicate()
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "annotations"], stdout=subprocess.PIPE)
@@ -139,14 +139,13 @@ class Derivative():
 					self.derivative['mediaType'] = IMAGE
 				elif self.mediaType == VIDEO:
 					print "is mkv"
-					# todo: make the three more derivatives!
 					cmd = "ffmpeg -y -i %s -acodec copy -vcodec copy %s"
 					mp4 = subprocess.Popen(cmd % (self.filename, baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					if mp4.communicate()[0] == None:
 						representations.append(base + ".mp4")
 			
 					cmd = "ffmpeg2theora %s"
-					ogg = subprocess.Popen(cmd % self.filename, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					ogg = subprocess.Popen(cmd % (self.filename), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					
 					if ogg.communicate()[0] == None:
 						representations.append(base + ".ogv")
@@ -161,29 +160,33 @@ class Derivative():
 			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
 			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
 			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
+			
+			try:
+				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
+			except:
+				print "region does not have a subject"
+				continue			
+			
 			if self.mediaType == IMAGE:
-				if(a['obfuscationType'].find('InformaTagger') != -1):
-					timeIn = 0
-					timeOut = 0
-					duration = 0
-					regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
-					annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
-					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
-			
+				timeIn = 0
+				timeOut = 0
+				duration = 0
+				regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
+				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
+				
 			elif self.mediaType == VIDEO:
-				if(a['obfuscationType'].find('identify') != -1):
-					timeIn = a['videoStartTime']
-					timeOut = a['videoEndTime']
-					duration = a['videoEndTime'] - a['videoStartTime']
-					videoTrail = []
+				timeIn = a['videoStartTime']
+				timeOut = a['videoEndTime']
+				duration = a['videoEndTime'] - a['videoStartTime']
+				videoTrail = []
+				
+				for vt in a['videoTrail']:
+					regionBounds = (regionBoundsDict % (vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
+					videoTrail.append(regionBounds)
 					
-					for vt in a['videoTrail']:
-						regionBounds = (regionBoundsDict % (vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
-						videoTrail.append(regionBounds)
-						
-					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
 			
-				# TODO burn this annotation to a flat file?
+			# TODO burn this annotation to a flat file?
 			discussions.append(discussion)
 		
 		return "[" + ",".join(discussions) + "]"
@@ -191,7 +194,7 @@ class Derivative():
 	def parseForKeywords(self, annotations):
 		keywords = []
 		for a in annotations:
-			if(a['obfuscationType'].find('InformaTagger') != -1):
+			try:
 				alias = a['subject']['alias']
 				words = alias.split(" ")
 				for w in words:
@@ -206,6 +209,9 @@ class Derivative():
 							i = keywords.index(w.lower())
 						except ValueError:
 							keywords.append(w.lower())
+			except:
+				print "region does not have a subject"
+				continue
 		
 		return '["' + '","'.join(keywords) + '"]'
 	
@@ -235,11 +241,11 @@ def init(fn, mt, isImport):
 	
 '''
 if len(sys.argv) != 4:
-	sys.exit("please enter filename, mediaType, and password")
+	sys.exit("please enter filename, mediaType, and import status")
 else:
 	filename = sys.argv[1]
 	mediaType = sys.argv[2]
-	password = sys.argv[3]
-	derivative = Derivative(filename, mediaType, password)
+	isImport = sys.argv[3]
+	derivative = Derivative(filename, mediaType, isImport)
 
 '''
