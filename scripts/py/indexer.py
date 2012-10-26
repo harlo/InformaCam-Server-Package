@@ -124,8 +124,6 @@ class Derivative():
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "messages"], stdout=subprocess.PIPE)
 		makeFolder.communicate()
-		chownFolder = subprocess.Popen(["chown","-R", "%s:www-data" % constants.masterUser, baseRoot + "messages"] , stdout=subprocess.PIPE)
-		chownFolder.communicate()
 		
 		makeFolder = subprocess.Popen(["mkdir", baseRoot + "annotations"], stdout=subprocess.PIPE)
 		makeFolder.communicate()
@@ -133,7 +131,7 @@ class Derivative():
 		copy = subprocess.Popen(["cp",self.filename, baseRoot + baseName], stdout=subprocess.PIPE)
 		if copy.communicate()[0] == "":
 				representations.append(baseName)
-				# TODO: THIS IS NOT SETTING PROPERLY-- WHY?
+				
 				if self.mediaType == IMAGE:
 					print "is image"
 					self.derivative['mediaType'] = IMAGE
@@ -145,13 +143,15 @@ class Derivative():
 						representations.append(base + ".mp4")
 			
 					cmd = "ffmpeg2theora %s"
-					ogg = subprocess.Popen(cmd % (self.filename), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					ogg = subprocess.Popen(cmd % (baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					
 					if ogg.communicate()[0] == None:
 						representations.append(base + ".ogv")
 						
 					self.derivative['mediaType'] = VIDEO
-			
+		
+		chownFolder = subprocess.Popen(["chown","-R", "%s:www-data" % constants.masterUser, baseRoot] , stdout=subprocess.PIPE)
+		chownFolder.communicate()	
 		return '["' + '","'.join(representations) + '"]'
 	
 	def parseAnnotations(self, annotations):
