@@ -16,16 +16,21 @@ VIDEO = 401
 #TODO: do a real job at this
 keywordOmits = keywords.keywordOmits
 
-couchTemplate = '{"dateCreated":%d, "sourceId":"%s", "representation":%s, "keywords":%s, "locationOnSave":%s, "location":%s, "j3m":%s, "mediaType":%d, "timestampIndexed":%d, "discussions":%s}'
-dictTemplate = [('dateCreated', 0),('sourceId', ""),('representation', []),('keywords', []), ('locationOnSave',[]),('location',[]),('j3m',""),('mediaType',0),('timestampIndexed',0),('discussions',[])]
+couchTemplate = '{"dateCreated":%d, "sourceId":"%s", "representation":%s, "keywords":%s, "locationOnSave":%s, "location":%s, "j3m":%s, "mediaType":%d, "timestampIndexed":%d, "discussions":%s, "importFlag":%s}'
+dictTemplate = [('dateCreated', 0),('sourceId', ""),('representation', []),('keywords', []), ('locationOnSave',[]),('location',[]),('j3m',""),('mediaType',0),('timestampIndexed',0),('discussions',[]),('importFlag',False)]
 
 class Derivative():
-	def __init__(self, fn, mt, pw):
+	def __init__(self, fn, mt, isImport):
 		self.filename = fn
 		self.mediaType = int(mt)
 
-		self.password = pw
+		if isImport == False:
+			self.isImport = "false"
+		else:
+			self.isImport = "true"
+			
 		self.derivative = dict(dictTemplate)
+		self.derivative['importFlag'] = self.isImport
 		if(self.getMetadata() == True):
 			#self.decryptMetadata() // is broken, fix later
 			
@@ -83,13 +88,12 @@ class Derivative():
 	def createDerivative(self):
 		self.parseJ3M()
 		self.derivative['timestampIndexed'] = int(time.time()) * 1000
-		d = (couchTemplate % (self.derivative['dateCreated'], self.derivative['sourceId'], self.derivative['representation'], self.derivative['keywords'], self.derivative['locationOnSave'], self.derivative['location'], self.derivative['j3m'], self.derivative['mediaType'], self.derivative['timestampIndexed'], self.derivative['discussions'])).__str__()
+		d = (couchTemplate % (self.derivative['dateCreated'], self.derivative['sourceId'], self.derivative['representation'], self.derivative['keywords'], self.derivative['locationOnSave'], self.derivative['location'], self.derivative['j3m'], self.derivative['mediaType'], self.derivative['timestampIndexed'], self.derivative['discussions'], self.derivative['importFlag'])).__str__()
 
 		cmd = 'curl -H "Content-Type: application/json" -X POST -d \'%s\' %s' % (d,couchQuery)
 		
 		couch = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 		output = couch.communicate()[0]
-
 				
 	def parseJ3M(self):
 		self.derivative['j3m'] = self.j3m
@@ -157,16 +161,17 @@ class Derivative():
 			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
 			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
 			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
-			
-			if(a['obfuscationType'].find('InformaTagger') != -1):
-				if self.mediaType == IMAGE:
+			if self.mediaType == IMAGE:
+				if(a['obfuscationType'].find('InformaTagger') != -1):
 					timeIn = 0
 					timeOut = 0
 					duration = 0
 					regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
-				# todo: how to parse the video...
-			elif(a['obfuscationType'].find('identify') != -1):
-				if self.mediaType == VIDEO:
+					annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
+			
+			elif self.mediaType == VIDEO:
+				if(a['obfuscationType'].find('identify') != -1):
 					timeIn = a['videoStartTime']
 					timeOut = a['videoEndTime']
 					duration = a['videoEndTime'] - a['videoStartTime']
@@ -176,15 +181,11 @@ class Derivative():
 						regionBounds = (regionBoundsDict % (vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
 						videoTrail.append(regionBounds)
 						
-
-				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
-				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
-				
-				
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+			
 				# TODO burn this annotation to a flat file?
-				discussions.append(discussion)
+			discussions.append(discussion)
 		
-		print "[" + ",".join(discussions) + "]"
 		return "[" + ",".join(discussions) + "]"
 	
 	def parseForKeywords(self, annotations):
@@ -205,7 +206,7 @@ class Derivative():
 							i = keywords.index(w.lower())
 						except ValueError:
 							keywords.append(w.lower())
-
+		
 		return '["' + '","'.join(keywords) + '"]'
 	
 	def getAllLocations(self, capturePlayback):
@@ -229,8 +230,8 @@ class Derivative():
 				return True
 		return False
 
-def init(fn, mt, pw):
-	return Derivative(fn, mt, pw)
+def init(fn, mt, isImport):
+	return Derivative(fn, mt, isImport)
 	
 '''
 if len(sys.argv) != 4:
