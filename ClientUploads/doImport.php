@@ -55,10 +55,27 @@
 				border:none;
 				cursor:pointer;
 			}
+			
+			#spinner {
+				position:absolute;
+				z-index:101;
+				width:18%;
+				height:80px;
+				text-align:center;
+				background-color:#c6ff00;
+				border:1px solid #444;
+				margin:0 0 0 48%;
+				padding:10px 0 0 0;
+				display:none;
+			}
 		</style>
 		<script type="text/javascript">
 			function listener() {
 				document.getElementsByTagName('body')[0].style.display = "none";
+			}
+			
+			function waiter(show) {
+				document.getElementById('spinner').style.display = show;
 			}
 			
 			function validateForm() {
@@ -66,6 +83,8 @@
 				if(!/(\.jpg|\.mkv)$/i.test(file.value)) {
 					return false;
 				}
+				
+				waiter("block");
 				return true;
 			}
 		</script>
@@ -73,7 +92,7 @@
 	
 	<body>
 		<h1>Import Media</h1>
-		
+		<div id="spinner"><img src="spinner_gif.gif" /></div>
 		<?php if(
 			!empty($_GET['authToken']) &&
 			!empty($_GET['doImport']) &&
@@ -89,6 +108,9 @@
 			<!-- somewhere in here we add authentication of user -->
 		</form>
 		<?php } else { ?>
+		<script type="text/javascript">
+			waiter("none");
+		</script>
 		<p>Your submission has been input and is processing.  You may click refresh at any time to get an updated list of submissions.<br /><br /><a class="dismiss" onclick="listener();">OK</a></p>
 		
 		<?php } ?>

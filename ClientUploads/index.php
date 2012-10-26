@@ -595,26 +595,6 @@
 			$this->res = new stdclass;
 			$this->res->result = $GLOBALS['fail'];
 			
-			// hash the media
-			$timestamp_scheduled = time() * 1000;
-			$original_hash = hash("sha1", $file['name'] . $timestamp_scheduled);
-			
-			// make its folders and whatever
-			if(!mkdir($GLOBALS['submission_root'] . $original_hash, 0770, true)) {
-				$this->res->reason = "Cannot create directory for " . $GLOBALS['submission_root'] . $original_hash;
-				return;
-			}
-			
-			// place in there
-			if(!move_uploaded_file(
-				$file['tmp_name'],
-				$GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name'])
-				)
-			) {
-				$this->res->reason = "Could not upload file: " . $GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name']);
-				return;
-			}
-			
 			$this->sag = $GLOBALS['sag'];
 			$this->sag->setDatabase('submissions');
 			
@@ -630,17 +610,37 @@
 				$this->res->reason = "Invalid id/rev";
 				return;
 			}
-			
-			
+
 			// update sub to have path and media type, update all bytes transferred, and set a flag for complete ul?
-			
-			$this->expectation->path = $GLOBALS['submission_root'] . $original_hash . "/" . basename($file['name']);
-			
-			if(strpos($file['name'], ".jpg"))
+			// hash the media
+			$timestamp_scheduled = time() * 1000;
+			$original_hash = hash("sha1", $file['name'] . $timestamp_scheduled);
+						
+			if(strpos($file['name'], ".jpg")) {
 				$this->expectation->mediaType = 400;
-			else if(strpos($file['name'], ".mkv"))
+				$newName = $original_hash . ".jpg";
+			} else if(strpos($file['name'], ".mkv")) {
 				$this->expectation->mediaType = 401;
-				
+				$newName = $original_hash . ".mkv";
+			}
+										
+			// make its folders and whatever
+			if(!mkdir($GLOBALS['submission_root'] . $original_hash, 0770, true)) {
+				$this->res->reason = "Cannot create directory for " . $GLOBALS['submission_root'] . $original_hash;
+				return;
+			}
+
+			// place in there
+			if(!move_uploaded_file(
+				$file['tmp_name'],
+				$GLOBALS['submission_root'] . $original_hash . "/" . $newName
+				)
+			) {
+				$this->res->reason = "Could not upload file: " . $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
+				return;
+			}
+			
+			$this->expectation->path = $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
 			$this->expectation->bytes_transferred = $file['size'];
 			$this->expectation->bytes_expected = $file['size'];
 			$this->expectation->j3m_bytes_expected = $file['size'];
@@ -665,8 +665,12 @@
 		!empty($_POST['uId'])
 	) {
 		$import = new Importer($_FILES['InformaCamImport'], $_POST['subAuthToken'], $_POST['subId'], $_POST['uId']);
-		// TODO: parse result...
-		include('doImport.php');
+		if($import->res->result == $GLOBALS['a_ok'])
+			include('doImport.php');
+		else {
+			//echo "<p>" . $import->res->reason ."</p>";
+			include('doImportFail.php');
+		}
 		
 	}
 	
