@@ -46,16 +46,26 @@ def getUnindexedUploads():
 	submissions = doCurl.DoCurl(get_unindexed).perform()['rows']
 	for submission in submissions:
 		res = False
+		isWhole = False
 		isImport = False
 		print "finding torrents for %s..." % submission['key']
 		
 		try:
-			if submission['value']['importFlag'] == True:
+			if(submission['value']['importFlag'] == True):
 				isImport = submission['value']['importFlag']
 				res = [submission['value']['path'],submission['value']['mediaType']]
-		except:
+		except Exception as err:
+			print err				
+			try:
+				 if(submission['value']['whole_upload'] == True):
+				 	isWhole = submission['value']['whole_upload']
+					res = [submission['value']['path'],submission['value']['mediaType']]
+			except Exception as err2:
+				print err2
+				res = j3mifier.init(submission['key'])
+			
 			# get the path key
-			res = j3mifier.init(submission['key'])
+			# return False
 				
 		if res == False:
 			print "still waiting for this submission to be complete"
@@ -67,11 +77,14 @@ def getUnindexedUploads():
 			derivative = indexer.init(res[0], res[1], isImport)
 			
 			# if derivative is not null, clean up!
-			if derivative != None:
-				if isImport == False:
+			if derivative != None and derivative.success == True:
+				if(isImport == False and isWhole == False):
 					updateSubmissions(derivative.derivative['representation'])
 				else:
 					updateImportedSubmission(res[0])
+			else:
+				print "derivative could not be generated"
+				logger.info("Failed to instantiate derivative.  skipping")
 
 logger = logging.getLogger('informaCamServer_py')
 handler = logging.FileHandler(constants.logFile)

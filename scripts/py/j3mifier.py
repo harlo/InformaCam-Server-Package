@@ -61,7 +61,11 @@ def buildMediaObject(torrent_path, torrent_descriptor):
 	for n in range(0, torrent_descriptor['num_chunks']):
 		f = torrent_path + '/' + ("%d_.j3mtorrent" % n)
 		file = open(f, 'r')
-		b64 = json.loads(file.read())
+		
+		try:
+			b64 = json.loads(file.read())
+		except:
+			return False
 		
 		blob = base64.b64decode(b64['blob'])
 		data += blob

@@ -7,8 +7,10 @@
 	$sag = new Sag();
 	$sag->login('highsteppers','youAreNotAServerAdmin');
 	
-	if($sag === null)
+	if($sag === null) {
 		header('Location: redir.php');
+		exit();
+	}
 	
 	$GLOBALS = array(
 		'sag' => $sag,
@@ -89,6 +91,140 @@
 		} catch(SagException $e) {
 			echo $e->getMessage();
 			return null;
+		}
+	}
+	
+	class WholeUploader {
+		protected $sag;
+		private $expectation;
+		public $res;
+		
+		public function __construct($pgpKeyFingerprint, $auth_token, $file) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+			
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('submissions');
+			
+			$this->expectation = isValidAuthTokenForUser($pgpKeyFingerprint, $auth_token, $this->sag);
+			
+			if($this->expectation === null) {
+				$this->res->reason = "Invalid auth token for user.";
+				$this->res->error_code = 1998;
+				return;
+			}
+			
+			if($this->expectation->bytes_expected != $file['size']) {
+				$this->res->reason = "Wrong size file";
+				$this->res->error_code = 1997;
+				return;
+			}
+			
+			if($this->expectation->mediaType == 400)
+				$newName = $this->expectation->j3m->originalHash . ".jpg";
+			else if($this->expectation->mediaType == 401)
+				$newName = $this->expectation->j3m->originalHash . ".mkv";
+			
+			if(!move_uploaded_file(
+				$file['tmp_name'],
+				$GLOBALS['submission_root'] . $this->expectation->j3m->originalHash . "/" . $newName)
+			) {
+				$this->res->reason = "Trouble uploading file.";
+				$this->res->error_code = 1999;
+				return;
+			}
+			
+			$this->expectation->bytes_transferred = $file['size'];
+			$this->expectation->whole_upload = true;
+			
+			$this->expectation->path = $GLOBALS['submission_root'] . $this->expectation->j3m->originalHash . "/" . $newName;
+			
+			if($this->expectation->j3m != null) {
+				if($newSize == $this->expectation->j3m_bytes_expected) {
+					unset($this->expectation->auth_token);
+				}
+			} else {
+				if($newSize == $this->expectation->bytes_expected) {
+					unset($this->expectation->auth_token);
+				}
+			}
+			
+			$this->sag->post($this->expectation);
+			
+			$this->res->result = $GLOBALS['a_ok'];
+			$this->res->bundle = $this->expectation;
+		}
+	}
+	
+	class Importer {
+		protected $sag;
+		private $expectation;
+		public $res;
+		
+		public function __construct($file, $rev, $id, $uId) {
+			$this->res = new stdclass;
+			$this->res->result = $GLOBALS['fail'];
+			
+			$this->sag = $GLOBALS['sag'];
+			$this->sag->setDatabase('submissions');
+			
+			$this->expectation = null;
+			try {
+				$this->expectation = isValidImportForUser($uId, $id, $rev, $this->sag);
+			} catch(SagException $e) {
+				$this->res->reason = $e->getMessage();
+				return;
+			}
+			
+			if($this->expectation == null) {
+				$this->res->reason = "Invalid id/rev";
+				return;
+			}
+
+			// update sub to have path and media type, update all bytes transferred, and set a flag for complete ul?
+			// hash the media
+			$timestamp_scheduled = time() * 1000;
+			$original_hash = hash("sha1", $file['name'] . $timestamp_scheduled);
+						
+			if(strpos($file['name'], ".jpg")) {
+				$this->expectation->mediaType = 400;
+				$newName = $original_hash . ".jpg";
+			} else if(strpos($file['name'], ".mkv")) {
+				$this->expectation->mediaType = 401;
+				$newName = $original_hash . ".mkv";
+			}
+										
+			// make its folders and whatever
+			if(!mkdir($GLOBALS['submission_root'] . $original_hash, 0770, true)) {
+				$this->res->reason = "Cannot create directory for " . $GLOBALS['submission_root'] . $original_hash;
+				return;
+			}
+
+			// place in there
+			if(!move_uploaded_file(
+				$file['tmp_name'],
+				$GLOBALS['submission_root'] . $original_hash . "/" . $newName
+				)
+			) {
+				$this->res->reason = "Could not upload file: " . $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
+				return;
+			}
+			
+			$this->expectation->path = $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
+			$this->expectation->bytes_transferred = $file['size'];
+			$this->expectation->bytes_expected = $file['size'];
+			$this->expectation->j3m_bytes_expected = $file['size'];
+			$this->expectation->importFlag = true;
+			$this->expectation->timestamp_scheduled = $timestamp_scheduled;
+			
+			try {
+				$this->sag->post($this->expectation);
+			} catch(SagException $e) {
+				$this->result->reason = $e->getMessage();
+				return;
+			}
+			
+			$this->res->result = $GLOBALS['a_ok'];
 		}
 	}
 	
@@ -257,7 +393,7 @@
 		}
 	}
 	
-	class MediaUploader {
+	class ChunkUploader {
 		private $expectation;
 		protected $sag;
 		public $res;
@@ -277,6 +413,7 @@
 				return;
 			}
 			
+			// do NOT name it this.
 			if(file_exists($GLOBALS['submission_root'] . $this->expectation->j3m->originalHash . "/" . basename($file['name']))) {
 				$this->res->reason = "already have file";
 				$this->res->error_code = 2000;
@@ -329,8 +466,15 @@
 			$this->bundle->sourceId = $j3m->pgpKeyFingerprint;
 			$this->bundle->bytes_transferred = 0;
 			$this->bundle->bytes_expected = $j3m->totalBytesExpected;
-			$this->bundle->j3m_bytes_expected = $j3m->j3mBytesExpected;
+			
 			$this->bundle->mediaType = $j3m->mediaType;
+			
+			if(isset($j3m->whole_upload)) {
+				$this->bundle->whole_upload = $j3m->whole_upload;
+			} else {
+				$this->bundle->j3m_bytes_expected = $j3m->j3mBytesExpected;
+			}
+			
 			$this->bundle->j3m = $j3m;
 			
 			
@@ -359,29 +503,7 @@
 			try {
 				$this->sag->post($this->bundle);
 				unset($this->bundle->path);
-				
-				$this->sag->setDatabase('sources');
-				$source = sourceExists($this->bundle->sourceId, $this->sag);
-				$supportingDataRequired = array();
-				
-				if($source == null) {
-					// also ask for missing req. files
-					$source = initSource($this->bundle->sourceId, $this->sag);
-					$supportingDataRequired = array(
-						$GLOBALS['requirements']['baseImage'],
-						$GLOBALS['requirements']['pgpKeyEncoded']
-					);
-				} else {
-					// check to see if there are missing req. files
-					$requirementCheck = new RequirementCheck($this->bundle->sourceId);
-					if($requirementCheck->res->result == $GLOBALS['a_ok'] && isset($requirementCheck->bundle->requirements)) {
-						$supportingDataRequired = $requirementCheck->bundle->requirements;
-					}
-				}
-				
-				if(count($supportingDataRequired) > 0)
-					$this->bundle->supportingDataRequired = $supportingDataRequired;
-				
+								
 				$this->res->bundle = $this->bundle;
 				$this->res->result = $GLOBALS['a_ok'];
 			} catch(SagException $e) {
@@ -480,9 +602,25 @@
 	if(
 		!empty($_POST['pgpKeyFingerprint']) &&
 		!empty($_POST['auth_token']) &&
-		!empty($_FILES['InformaCamUpload'])
+		!empty($_FILES['InformaCamUpload']) &&
+		empty($_POST['whole_upload'])
 	) {		
-		$uploader = new MediaUploader(
+		$uploader = new ChunkUploader(
+			$_POST['pgpKeyFingerprint'],
+			$_POST['auth_token'],
+			$_FILES['InformaCamUpload']
+		);
+		
+		echo json_encode($uploader->res);
+	}
+	
+	if(
+		!empty($_POST['pgpKeyFingerprint']) &&
+		!empty($_POST['auth_token']) &&
+		!empty($_FILES['InformaCamUpload']) &&
+		!empty($_POST['whole_upload'])
+	) {		
+		$uploader = new WholeUploader(
 			$_POST['pgpKeyFingerprint'],
 			$_POST['auth_token'],
 			$_FILES['InformaCamUpload']
@@ -584,78 +722,6 @@
 			$_FILES['InformaCamUpload']
 		);
 		echo json_encode($message);
-	}
-	
-	class Importer {
-		protected $sag;
-		private $expectation;
-		public $res;
-		
-		public function __construct($file, $rev, $id, $uId) {
-			$this->res = new stdclass;
-			$this->res->result = $GLOBALS['fail'];
-			
-			$this->sag = $GLOBALS['sag'];
-			$this->sag->setDatabase('submissions');
-			
-			$this->expectation = null;
-			try {
-				$this->expectation = isValidImportForUser($uId, $id, $rev, $this->sag);
-			} catch(SagException $e) {
-				$this->res->reason = $e->getMessage();
-				return;
-			}
-			
-			if($this->expectation == null) {
-				$this->res->reason = "Invalid id/rev";
-				return;
-			}
-
-			// update sub to have path and media type, update all bytes transferred, and set a flag for complete ul?
-			// hash the media
-			$timestamp_scheduled = time() * 1000;
-			$original_hash = hash("sha1", $file['name'] . $timestamp_scheduled);
-						
-			if(strpos($file['name'], ".jpg")) {
-				$this->expectation->mediaType = 400;
-				$newName = $original_hash . ".jpg";
-			} else if(strpos($file['name'], ".mkv")) {
-				$this->expectation->mediaType = 401;
-				$newName = $original_hash . ".mkv";
-			}
-										
-			// make its folders and whatever
-			if(!mkdir($GLOBALS['submission_root'] . $original_hash, 0770, true)) {
-				$this->res->reason = "Cannot create directory for " . $GLOBALS['submission_root'] . $original_hash;
-				return;
-			}
-
-			// place in there
-			if(!move_uploaded_file(
-				$file['tmp_name'],
-				$GLOBALS['submission_root'] . $original_hash . "/" . $newName
-				)
-			) {
-				$this->res->reason = "Could not upload file: " . $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
-				return;
-			}
-			
-			$this->expectation->path = $GLOBALS['submission_root'] . $original_hash . "/" . $newName;
-			$this->expectation->bytes_transferred = $file['size'];
-			$this->expectation->bytes_expected = $file['size'];
-			$this->expectation->j3m_bytes_expected = $file['size'];
-			$this->expectation->importFlag = true;
-			$this->expectation->timestamp_scheduled = $timestamp_scheduled;
-			
-			try {
-				$this->sag->post($this->expectation);
-			} catch(SagException $e) {
-				$this->result->reason = $e->getMessage();
-				return;
-			}
-			
-			$this->res->result = $GLOBALS['a_ok'];
-		}
 	}
 	
 	if(

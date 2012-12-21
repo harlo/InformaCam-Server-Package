@@ -8,7 +8,7 @@ function payload() {
 		fi
 			
 		python /mnt/j3m/scripts/py/upload_monitor.py
-		sleep 20
+		sleep 300
 	done
 }
 source daemon-functions.sh

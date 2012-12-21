@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-import sys, os, cStringIO, json, subprocess, time, constants, keywords
+import sys, os, cStringIO, json, subprocess, time, constants, keywords, gnupg, base64, xform_mapper
+from pprint import pprint
 
 '''
 	argv: filename mediaType isImport
@@ -32,8 +33,6 @@ class Derivative():
 		self.derivative = dict(dictTemplate)
 		self.derivative['importFlag'] = self.isImport
 		if(self.getMetadata() == True):
-			#self.decryptMetadata() // is unimplemented, fix later
-			
 			self.createDerivative()
 	
 	def getMetadata(self):
@@ -69,47 +68,67 @@ class Derivative():
 		while True:
 			line = j3mparser.stdout.readline()
 			if line != '':
-				if(line.find("file: %s" %(self.filename)) == -1 and self.isOmitable(line) is False):
-					self.j3m = self.j3m + line
-			else:
-				break
+				try:
+					if(line.find("file: %s" %(self.filename)) == -1 and self.isOmitable(line) is False):
+						self.j3m = self.j3m + line
+				except Exception as err:
+					print err
+					break
 		return True
 		
 	def decryptMetadata(self):
-		print("decrypting: \n%s" %(self.j3m))
-		decrypt = subprocess.Popen(["gpg"], stdout=subprocess.PIPE)
-		while True:
-			line = decrypt.stdout.readline()
-			if line != '':
-				print(line)
-			else:
-				break
+		gpg = gnupg.GPG()
+		j3m = base64.b64decode(self.j3m)
+		try:
+			decrypted_data = gpg.decrypt(j3m, passphrase=str(constants.d_auth))
+			pprint(vars(decrypted_data))
+			
+			if(decrypted_data.ok):
+				self.j3m = decrypted_data.data
+				return True
+				
+			return False
+		except Exception, error:
+			print "ERROR"
+			print error
+			return False
 	
 	def createDerivative(self):
 		self.parseJ3M()
-		self.derivative['timestampIndexed'] = int(time.time()) * 1000
-		d = (couchTemplate % (self.derivative['dateCreated'], self.derivative['sourceId'], self.derivative['representation'], self.derivative['keywords'], self.derivative['locationOnSave'], self.derivative['location'], self.derivative['j3m'], self.derivative['mediaType'], self.derivative['timestampIndexed'], self.derivative['discussions'], self.derivative['importFlag'])).__str__()
-
-		cmd = 'curl -H "Content-Type: application/json" -X POST -d \'%s\' %s' % (d,couchQuery)
-		
-		couch = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
-		output = couch.communicate()[0]
+		if self.success == True:
+			self.derivative['timestampIndexed'] = int(time.time()) * 1000
+			d = (couchTemplate % (self.derivative['dateCreated'], self.derivative['sourceId'], self.derivative['representation'], self.derivative['keywords'], self.derivative['locationOnSave'], self.derivative['location'], self.derivative['j3m'], self.derivative['mediaType'], self.derivative['timestampIndexed'], self.derivative['discussions'], self.derivative['importFlag'])).__str__()
+	
+			cmd = 'curl -H "Content-Type: application/json" -X POST -d \'%s\' %s' % (d,couchQuery)
+			
+			couch = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+			output = couch.communicate()[0]
 				
 	def parseJ3M(self):
+		j = None
+		try:
+			j = json.loads(self.j3m)
+		except Exception as err:
+			print err
+			print "might need to decrypt"
+			if self.decryptMetadata():
+				j = json.loads(self.j3m)
+		
+		if j == None:
+			self.success = False
+			return				
+		
 		self.derivative['j3m'] = self.j3m
-		
-		j = json.loads(self.j3m)
-		
 		self.derivative['mediaType'] = self.mediaType
 		self.derivative['dateCreated'] = j['genealogy']['dateCreated']
-		self.derivative['sourceId'] = j['genealogy']['createdOnDevice']['deviceFingerprint']
+		self.derivative['sourceId'] = j['intent']['owner']['publicKeyFingerprint']
 		self.derivative['location'] = self.getAllLocations(j['data']['mediaCapturePlayback'])
 		self.derivative['locationOnSave'] = self.findClosestLocation(self.derivative['dateCreated'], j['data']['mediaCapturePlayback'])
 		if(j['data'].get('annotations')):
-			self.derivative['keywords'] = self.parseForKeywords(j['data']['annotations'])
-			self.derivative['discussions'] = self.parseAnnotations(j['data']['annotations'])
+			self.buildAnnotations(j['data']['annotations'])
 		
 		self.derivative['representation'] = self.createRepresentations()
+		self.success = True
 		
 	def createRepresentations(self):
 		representations = []
@@ -154,66 +173,61 @@ class Derivative():
 		chownFolder.communicate()	
 		return '["' + '","'.join(representations) + '"]'
 	
-	def parseAnnotations(self, annotations):
-		discussions = []
-		for a in annotations:
-			discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
-			annotationDict = '{"content":"%s","submittedBy":"%s", "date":%d}'
-			regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
-			
-			try:
-				annotation = (annotationDict % (a['subject']['alias'],self.derivative['sourceId'],a['timestamp'])).__str__()
-			except:
-				print "region does not have a subject"
-				continue			
-			
-			if self.mediaType == IMAGE:
-				timeIn = 0
-				timeOut = 0
-				duration = 0
-				regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
-				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
-				
-			elif self.mediaType == VIDEO:
-				timeIn = a['videoStartTime']
-				timeOut = a['videoEndTime']
-				duration = a['videoEndTime'] - a['videoStartTime']
-				videoTrail = []
-				
-				for vt in a['videoTrail']:
-					regionBounds = (regionBoundsDict % (vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
-					videoTrail.append(regionBounds)
-					
-				discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
-			
-			# TODO burn this annotation to a flat file?
-			discussions.append(discussion)
-		
-		return "[" + ",".join(discussions) + "]"
-	
-	def parseForKeywords(self, annotations):
+	def buildAnnotations(self, annotations):
 		keywords = []
-		for a in annotations:
-			try:
-				alias = a['subject']['alias']
-				words = alias.split(" ")
-				for w in words:
-					match = False
-					for o in keywordOmits:
-						if w.lower() == o:
-							match = True
-							break
-							
-					if(match == False):
-						try:
-							i = keywords.index(w.lower())
-						except ValueError:
-							keywords.append(w.lower())
-			except:
-				print "region does not have a subject"
-				continue
+		discussions = []
+		discussionDict = '{"date":%d,"originatedBy":"%s","timeIn":%d,"timeOut":%d,"duration":%d,"annotations":[%s],"regionBounds":%s}'
+		annotationDict = '{"content":%s,"submittedBy":"%s", "date":%d}'
 		
-		return '["' + '","'.join(keywords) + '"]'
+		for a in annotations:
+			map = xform_mapper.XFormMap(a['subject']['form_namespace'])
+			map.mapAnswers(a['subject']['form_data'])
+			
+			try:
+				for key, val in map.form_data['form_data'].iteritems():					
+					if type(val).__name__ == 'list':
+						for v in val:
+							kw = parseKeyword(v, keywords)
+							if kw is not None:
+								for k in kw:
+									keywords.append(k)
+					else:
+						kw = parseKeyword(val, keywords)
+						if kw is not None:
+							for k in kw:
+								keywords.append(k)
+							
+				annotation = (annotationDict % (map.form_data_string, self.derivative['sourceId'],a['timestamp'])).__str__()
+				
+				if self.mediaType == IMAGE:
+					timeIn = 0
+					timeOut = 0
+					duration = 0
+					regionBoundsDict = '{"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
+					regionBounds = (regionBoundsDict % (a['regionBounds']['regionCoordinates']['region_top'],a['regionBounds']['regionCoordinates']['region_left'],a['regionBounds']['regionDimensions']['region_height'],a['regionBounds']['regionDimensions']['region_width']))
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, regionBounds)).__str__()
+				
+				elif self.mediaType == VIDEO:
+					timeIn = a['videoStartTime']
+					timeOut = a['videoEndTime']
+					duration = a['videoEndTime'] - a['videoStartTime']
+					videoTrail = []
+					regionBoundsDict = '{"timestamp":%d,"regionCoordinates":{"region_top":%d,"region_left":%d},"regionDimensions":{"region_height":%d,"region_width":%d}}'
+					
+					for vt in a['videoTrail']:
+						regionBounds = (regionBoundsDict % (vt['timestamp'],vt['regionCoordinates']['region_top'],vt['regionCoordinates']['region_left'],vt['regionDimensions']['region_height'],vt['regionDimensions']['region_width']))
+						videoTrail.append(regionBounds)
+						
+					discussion = (discussionDict % (self.derivative['dateCreated'],self.derivative['sourceId'], timeIn, timeOut, duration, annotation, "[" + ",".join(videoTrail) + "]")).__str__()
+				
+				# TODO burn this annotation to a flat file?
+				discussions.append(discussion)
+			except Exception as err:
+				print err
+				continue
+
+		self.derivative['keywords'] = '["' + '","'.join(keywords) + '"]'
+		self.derivative['discussions'] = "[" + ",".join(discussions) + "]"
 	
 	def getAllLocations(self, capturePlayback):
 		locations = []
@@ -235,6 +249,27 @@ class Derivative():
 			if line.find(o) != -1:
 				return True
 		return False
+
+
+def parseKeyword(val, keywords):
+	found_words = []
+	for w in val.split():
+		match = False
+		for o in keywordOmits:
+			if w.lower() == o:
+				match = True
+				break
+			
+		if(match == False):
+			try:
+				i = keywords.index(w.lower())
+			except ValueError:
+				found_words.append(w.lower())
+					
+	if len(found_words) > 0:
+		return found_words
+	else:
+		return None
 
 def init(fn, mt, isImport):
 	return Derivative(fn, mt, isImport)
