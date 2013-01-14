@@ -20,7 +20,7 @@ def updateBytesTransferred(lookup, torrent_path):
 
 	j3m = curl.uReplace(j['j3m'])
 	
-	couch = '%s@localhost:5984/' % constants.couchLogin
+	#couch = '%s@localhost:5984/' % constants.couchLogin
 	update = "submissions/%s?rev=%s" % (j['_id'],j['_rev'])
 	u = '{"_id":"%s","_rev":"%s","bytes_expected":%d,"bytes_transferred":%d,"j3m":%s,"j3m_bytes_expected":%s,"mediaType":%d,"sourceId":"%s","timestamp_created":%d,"timestamp_indexed":%d,"timestamp_scheduled":%d}' % (j['_id'],j['_rev'],j['bytes_expected'],bytesTransferred,j3m,j['j3m_bytes_expected'],j['mediaType'],j['sourceId'],j['timestamp_created'],j['timestamp_indexed'],j['timestamp_scheduled'])
 		

@@ -30,10 +30,31 @@ class Derivative():
 		else:
 			self.isImport = "true"
 			
+		self.mkdirs()
+			
 		self.derivative = dict(dictTemplate)
 		self.derivative['importFlag'] = self.isImport
 		if(self.getMetadata() == True):
 			self.createDerivative()
+			
+	def mkdirs(self):
+		paths = self.filename.split("/")
+		self.baseName = paths[len(paths) - 1]
+		self.baseRoot = derivativeRoot + self.baseName[:-4] + "/"
+		self.base = self.baseName[:-4]
+		
+		# make annotations folder, messages folder
+		makeFolder = subprocess.Popen(["mkdir", self.baseRoot], stdout=subprocess.PIPE)
+		makeFolder.communicate()
+		
+		makeFolder = subprocess.Popen(["mkdir", self.baseRoot + "messages"], stdout=subprocess.PIPE)
+		makeFolder.communicate()
+		
+		makeFolder = subprocess.Popen(["mkdir", self.baseRoot + "annotations"], stdout=subprocess.PIPE)
+		makeFolder.communicate()
+		
+		chownFolder = subprocess.Popen(["chown","-R", "%s:www-data" % constants.masterUser, self.baseRoot] , stdout=subprocess.PIPE)
+		chownFolder.communicate()
 	
 	def getMetadata(self):
 		if self.mediaType == IMAGE:
@@ -74,6 +95,8 @@ class Derivative():
 				except Exception as err:
 					print err
 					break
+			else:
+				break
 		return True
 		
 	def decryptMetadata(self):
@@ -132,24 +155,10 @@ class Derivative():
 		
 	def createRepresentations(self):
 		representations = []
-		paths = self.filename.split("/")
-		baseName = paths[len(paths) - 1]
-		baseRoot = derivativeRoot + baseName[:-4] + "/"
-		base = baseName[:-4]	
 		
-		# make annotations folder, messages folder
-		makeFolder = subprocess.Popen(["mkdir", baseRoot], stdout=subprocess.PIPE)
-		makeFolder.communicate()
-		
-		makeFolder = subprocess.Popen(["mkdir", baseRoot + "messages"], stdout=subprocess.PIPE)
-		makeFolder.communicate()
-		
-		makeFolder = subprocess.Popen(["mkdir", baseRoot + "annotations"], stdout=subprocess.PIPE)
-		makeFolder.communicate()
-		
-		copy = subprocess.Popen(["cp",self.filename, baseRoot + baseName], stdout=subprocess.PIPE)
+		copy = subprocess.Popen(["cp",self.filename, self.baseRoot + self.baseName], stdout=subprocess.PIPE)
 		if copy.communicate()[0] == "":
-				representations.append(baseName)
+				representations.append(self.baseName)
 				
 				if self.mediaType == IMAGE:
 					print "is image"
@@ -157,20 +166,19 @@ class Derivative():
 				elif self.mediaType == VIDEO:
 					print "is mkv"
 					cmd = "ffmpeg -y -i %s -acodec copy -vcodec copy %s"
-					mp4 = subprocess.Popen(cmd % (self.filename, baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					mp4 = subprocess.Popen(cmd % (self.filename, self.baseRoot + self.base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					if mp4.communicate()[0] == None:
-						representations.append(base + ".mp4")
+						representations.append(self.base + ".mp4")
 			
 					cmd = "ffmpeg2theora %s"
-					ogg = subprocess.Popen(cmd % (baseRoot + base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
+					ogg = subprocess.Popen(cmd % (self.baseRoot + self.base + ".mp4"), shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 					
 					if ogg.communicate()[0] == None:
-						representations.append(base + ".ogv")
+						representations.append(self.base + ".ogv")
 						
 					self.derivative['mediaType'] = VIDEO
 		
-		chownFolder = subprocess.Popen(["chown","-R", "%s:www-data" % constants.masterUser, baseRoot] , stdout=subprocess.PIPE)
-		chownFolder.communicate()	
+		
 		return '["' + '","'.join(representations) + '"]'
 	
 	def buildAnnotations(self, annotations):
@@ -180,11 +188,11 @@ class Derivative():
 		annotationDict = '{"content":%s,"submittedBy":"%s", "date":%d}'
 		
 		for a in annotations:
-			map = xform_mapper.XFormMap(a['subject']['form_namespace'])
+			map = xform_mapper.XFormMap(a['subject']['form_namespace'], self.baseRoot, self.base)
 			map.mapAnswers(a['subject']['form_data'])
 			
 			try:
-				for key, val in map.form_data['form_data'].iteritems():					
+				for key, val in map.form_data['form_data'].iteritems():				
 					if type(val).__name__ == 'list':
 						for v in val:
 							kw = parseKeyword(v, keywords)
@@ -239,10 +247,14 @@ class Derivative():
 		return "[" + ",".join(locations) + "]"
 	
 	def findClosestLocation(self, dateCreated, capturePlayback):
+		locFound = False
 		for c in capturePlayback:
 			s = c['sensorPlayback']
 			if(s.get('gps_coords') and abs(c['timestamp'] - dateCreated) <= 5000):
 				return s['gps_coords']
+				
+		if locFound == False:
+			return "null"
 			
 	def isOmitable(self, line):
 		for o in omits:

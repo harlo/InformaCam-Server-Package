@@ -25,6 +25,10 @@ class DoCurl(object):
 		for item in dict:
 			if dict.get(item).__class__.__name__ == "unicode":
 				newDict.append("\"%s\":\"%s\"" % (item, dict.get(item)))
+			elif dict.get(item).__class__.__name__ == "bool":
+				newDict.append("\"%s\":%s" % (item, str(dict.get(item)).lower()))
+			elif dict.get(item).__class__.__name__ == "dict":
+				newDict.append("\"%s\":%s" % (item, self.uReplace(dict.get(item))))
 			else:
 				newDict.append("\"%s\":%d" % (item, dict.get(item)))
 		return "{" + ",".join(newDict) + "}"
@@ -33,6 +37,7 @@ class DoCurl(object):
 		url = ('%s@localhost:5984/%s' % (constants.couchLogin, query)).__str__()
 		
 		cmd = 'curl -H "Content-Type: application/json" -X PUT -d \'%s\' %s' % (json, url)
+		print cmd
 		
 		p_update = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True)
 		return p_update.communicate()[0]

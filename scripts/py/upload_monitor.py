@@ -16,6 +16,18 @@ def doSudoTest():
 	chownFolder = subprocess.Popen(["chown","-R", "www-data:www-data", constants.chownTest] , stdout=subprocess.PIPE)
 	testResult = chownFolder.communicate()[0]
 
+def markOccupied(key, is_occupied):
+	curl = doCurl.DoCurl('submissions/%s' % key)	
+	submission = curl.perform()
+	update = "submissions/%s?rev=%s" % (submission['_id'], submission['_rev'])
+	
+	submission[u'is_occupied'] = is_occupied
+	submission = curl.uReplace(submission)
+	
+	print submission
+	print curl.putOverride(update, submission)
+	return True
+
 def sendConfirmation(root):
 	message.makeMessage(root, constants.submission_message)
 	logger.info("sent confirmation to %s" % root)
@@ -51,6 +63,13 @@ def getUnindexedUploads():
 		print "finding torrents for %s..." % submission['key']
 		
 		try:
+			print "skipping %s, is occupied" % submission['key']
+			if submission['value']['is_occupied'] == True:
+				continue
+		except KeyError as err:
+			pass
+		
+		try:
 			if(submission['value']['importFlag'] == True):
 				isImport = submission['value']['importFlag']
 				res = [submission['value']['path'],submission['value']['mediaType']]
@@ -63,15 +82,15 @@ def getUnindexedUploads():
 			except Exception as err2:
 				print err2
 				res = j3mifier.init(submission['key'])
-			
-			# get the path key
-			# return False
-				
+							
 		if res == False:
 			print "still waiting for this submission to be complete"
 			logger.info("performed check: no new complete submissions")
 		else:
 			print "now indexing %s (mediatype: %s)" % (res[0], res[1])
+			if markOccupied(submission['key'], True) == False:
+				return
+				
 			logger.info("attempting to index %s (mediatype: %s)" % (res[0], res[1]))
 			# this file should now be indexed!
 			derivative = indexer.init(res[0], res[1], isImport)
@@ -82,8 +101,10 @@ def getUnindexedUploads():
 					updateSubmissions(derivative.derivative['representation'])
 				else:
 					updateImportedSubmission(res[0])
+
 			else:
 				print "derivative could not be generated"
+				markOccupied(submission['key'],False)
 				logger.info("Failed to instantiate derivative.  skipping")
 
 logger = logging.getLogger('informaCamServer_py')
