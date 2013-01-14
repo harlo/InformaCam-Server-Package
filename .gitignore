@@ -4,3 +4,4 @@ scripts/mcr/v171/*
 *.err
 *.log
 *.pid
+scripts/py/constants.py
